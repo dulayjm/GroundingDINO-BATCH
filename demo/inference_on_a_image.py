@@ -90,22 +90,46 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     device = "cuda" if not cpu_only else "cpu"
     model = model.to(device)
     image = image.to(device)
-    with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
-    logits = outputs["pred_logits"].sigmoid()[0]  # (nq, 256)
-    boxes = outputs["pred_boxes"][0]  # (nq, 4)
 
-    # filter output
-    if token_spans is None:
-        logits_filt = logits.cpu().clone()
-        boxes_filt = boxes.cpu().clone()
+    # here is where we are making chnages with those outputs ...
+    
+    # print(type(image))
+    print(image.shape)
+    print(image[None].shape)
+
+    # print(torch.eq(image, image[None]))
+
+    y = image.detach().clone() # method e
+    z = image.detach().clone() # method e
+
+    images = torch.stack([image, y, z])
+
+    print("images shape", images.shape)
+    captions = [caption, caption, caption]
+
+    with torch.no_grad():
+        outputs = model(images, captions=captions)
+    logits = outputs["pred_logits"].sigmoid()  # (nq, 256)
+    boxes = outputs["pred_boxes"]  # (nq, 4)
+
+    print("boxes fuck you justin", boxes)
+
+    print(logits.shape)
+    print(boxes.shape)
+
+    # for logit in logits, you can do the rest with it ...
+    all_boxes_filt = []
+    all_pred_phrases = []
+    for i in range(len(logits)):
+        logits_filt = logits[i].cpu().clone()
+        boxes_filt = boxes[i].cpu().clone()
         filt_mask = logits_filt.max(dim=1)[0] > box_threshold
         logits_filt = logits_filt[filt_mask]  # num_filt, 256
         boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
 
         # get phrase
         tokenlizer = model.tokenizer
-        tokenized = tokenlizer(caption)
+        tokenized = tokenlizer(captions[i])
         # build pred
         pred_phrases = []
         for logit, box in zip(logits_filt, boxes_filt):
@@ -114,37 +138,12 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
                 pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
             else:
                 pred_phrases.append(pred_phrase)
-    else:
-        # given-phrase mode
-        positive_maps = create_positive_map_from_span(
-            model.tokenizer(text_prompt),
-            token_span=token_spans
-        ).to(image.device) # n_phrase, 256
+        all_boxes_filt.append(boxes_filt)
+        all_pred_phrases.append(pred_phrases)
 
-        logits_for_phrases = positive_maps @ logits.T # n_phrase, nq
-        all_logits = []
-        all_phrases = []
-        all_boxes = []
-        for (token_span, logit_phr) in zip(token_spans, logits_for_phrases):
-            # get phrase
-            phrase = ' '.join([caption[_s:_e] for (_s, _e) in token_span])
-            # get mask
-            filt_mask = logit_phr > box_threshold
-            # filt box
-            all_boxes.append(boxes[filt_mask])
-            # filt logits
-            all_logits.append(logit_phr[filt_mask])
-            if with_logits:
-                logit_phr_num = logit_phr[filt_mask]
-                all_phrases.extend([phrase + f"({str(logit.item())[:4]})" for logit in logit_phr_num])
-            else:
-                all_phrases.extend([phrase for _ in range(len(filt_mask))])
-        boxes_filt = torch.cat(all_boxes, dim=0).cpu()
-        pred_phrases = all_phrases
-
-
-    return boxes_filt, pred_phrases
-
+    print("all_boxes_filt", all_boxes_filt)
+    print("all_pred_phrases", all_pred_phrases)
+    return all_boxes_filt, all_pred_phrases
 
 if __name__ == "__main__":
 
