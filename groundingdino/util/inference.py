@@ -50,52 +50,90 @@ def load_image(image_path: str) -> Tuple[np.array, torch.Tensor]:
     return image, image_transformed
 
 
-def predict(
-        model,
-        image: torch.Tensor,
-        caption: str,
-        box_threshold: float,
-        text_threshold: float,
-        device: str = "cuda",
-        remove_combined: bool = False
-) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
-    caption = preprocess_caption(caption=caption)
+# def predict(
+#         model,
+#         image: torch.Tensor,
+#         caption: str,
+#         box_threshold: float,
+#         text_threshold: float,
+#         device: str = "cuda",
+#         remove_combined: bool = False
+# ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
+#     caption = preprocess_caption(caption=caption)
 
-    model = model.to(device)
-    image = image.to(device)
+#     model = model.to(device)
+#     image = image.to(device)
+
+#     with torch.no_grad():
+#         outputs = model(image[None], captions=[caption])
+
+#     prediction_logits = outputs["pred_logits"].cpu().sigmoid()[0]  # prediction_logits.shape = (nq, 256)
+#     prediction_boxes = outputs["pred_boxes"].cpu()[0]  # prediction_boxes.shape = (nq, 4)
+
+#     mask = prediction_logits.max(dim=1)[0] > box_threshold
+#     logits = prediction_logits[mask]  # logits.shape = (n, 256)
+#     boxes = prediction_boxes[mask]  # boxes.shape = (n, 4)
+
+#     tokenizer = model.tokenizer
+#     tokenized = tokenizer(caption)
+    
+#     if remove_combined:
+#         sep_idx = [i for i in range(len(tokenized['input_ids'])) if tokenized['input_ids'][i] in [101, 102, 1012]]
+        
+#         phrases = []
+#         for logit in logits:
+#             max_idx = logit.argmax()
+#             insert_idx = bisect.bisect_left(sep_idx, max_idx)
+#             right_idx = sep_idx[insert_idx]
+#             left_idx = sep_idx[insert_idx - 1]
+#             phrases.append(get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer, left_idx, right_idx).replace('.', ''))
+#     else:
+#         phrases = [
+#             get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer).replace('.', '')
+#             for logit
+#             in logits
+#         ]
+
+#     return boxes, logits.max(dim=1)[0], phrases
+
+
+# detect object using grounding DINO
+def predict(images_list, text_prompts, model, box_threshold = 0.3, text_threshold = 0.25, device='cuda'):
+
+    captions = [preprocess_caption(caption) for caption in text_prompts]
+
+    images = torch.stack(images_list)
+    images = images.to(device)
 
     with torch.no_grad():
-        outputs = model(image[None], captions=[caption])
+        outputs = model(images, captions=captions)
 
-    prediction_logits = outputs["pred_logits"].cpu().sigmoid()[0]  # prediction_logits.shape = (nq, 256)
-    prediction_boxes = outputs["pred_boxes"].cpu()[0]  # prediction_boxes.shape = (nq, 4)
+    prediction_logits = outputs["pred_logits"].cpu().sigmoid()  # prediction_logits.shape = (bsz，nq, 256)
+    prediction_boxes = outputs["pred_boxes"].cpu()  # prediction_boxes.shape = (bsz, nq, 4)
 
-    mask = prediction_logits.max(dim=1)[0] > box_threshold
-    logits = prediction_logits[mask]  # logits.shape = (n, 256)
-    boxes = prediction_boxes[mask]  # boxes.shape = (n, 4)
-
+    logits_res = []
+    boxs_res = []
+    phrases_list = []
     tokenizer = model.tokenizer
-    tokenized = tokenizer(caption)
-    
-    if remove_combined:
-        sep_idx = [i for i in range(len(tokenized['input_ids'])) if tokenized['input_ids'][i] in [101, 102, 1012]]
-        
-        phrases = []
-        for logit in logits:
-            max_idx = logit.argmax()
-            insert_idx = bisect.bisect_left(sep_idx, max_idx)
-            right_idx = sep_idx[insert_idx]
-            left_idx = sep_idx[insert_idx - 1]
-            phrases.append(get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer, left_idx, right_idx).replace('.', ''))
-    else:
+    for ub_logits, ub_boxes, ub_captions in zip(prediction_logits, prediction_boxes, captions):
+        mask = ub_logits.max(dim=1)[0] > box_threshold
+        logits = ub_logits[mask]  # logits.shape = (n, 256)
+        boxes = ub_boxes[mask]  # boxes.shape = (n, 4)
+        logits_res.append(logits.max(dim=1)[0])
+        boxs_res.append(boxes)
+
+        tokenized = tokenizer(ub_captions)
         phrases = [
             get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer).replace('.', '')
             for logit
             in logits
         ]
-
-    return boxes, logits.max(dim=1)[0], phrases
-
+        phrases_list.append(phrases)
+    print('bboxs:', boxs_res)
+    print('logits:', logits_res)
+    print('phrases:', phrases_list)
+    1/0
+    return boxs_res, logits_res, phrases_list
 
 def annotate(image_source: np.ndarray, boxes: torch.Tensor, logits: torch.Tensor, phrases: List[str]) -> np.ndarray:
     h, w, _ = image_source.shape
