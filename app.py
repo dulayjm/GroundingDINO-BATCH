@@ -35,11 +35,11 @@ print('os.getcwd()', os.getcwd())
 # result = subprocess.run(["pip", "install", "-e", "./GroundingDINO"], check=True)
 # print(f"pip install GroundingDINO = {result}")
 
-from inference import load_model, predict
+from inference import load_models, predict
 print('before loading models')
 # Load the model by reading the `SM_MODEL_DIR` environment variable
 # which is passed to the container by SageMaker (usually /opt/ml/model).
-dino_model = load_model()
+dino_model = load_models()
 
 app = Flask(__name__)
 print('after loading models')
@@ -65,7 +65,7 @@ def invocations():
     Function which responds to the invocations requests.
     """
     body = request.json
-    return predict(body, dino_model)
+    return predict(dino_model, body)
 
 if __name__=="__main__":
-    app.run(host="hostname", port="80")
+    app.run(host="172.31.11.115", port="80")

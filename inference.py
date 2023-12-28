@@ -42,13 +42,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("USING DEVICE: ", device)
 
 # init function
-def load_models(model_dir):
+def load_models():
     """
     Load the gluon model. Called once when hosting service starts.
     :param: model_dir The directory where model files are stored.
     :return: a model (in this case a Gluon network) and the column info.
     """    
-    model = load_model("/opt/ml/code/groundingdino/config/GroundingDINO_SwinT_OGC.py", model_dir, "./weights/", cpu_only=False)
+    model = load_model("./groundingdino/config/GroundingDINO_SwinT_OGC.py", "./weights/groundingdino_swint_ogc.pth", cpu_only=False)
 
     print("MODEL IS ", model)
 
@@ -66,7 +66,7 @@ def predict(model, data):
     }
     """
     # if "application/json" in input_content_type:
-    data = json.loads(data)
+    # data = json.loads(data)
     inputs = data.pop("inputs", data)
 
     if isinstance(inputs['image'], list):
@@ -87,16 +87,16 @@ def predict(model, data):
             
         inport_torch_stack = torch.stack(input_images)
 
-        boxes_filt, pred_phrases = get_grounding_output(
+        output = get_grounding_output(
             model, inport_torch_stack, text_prompt, 
             0.35, 0.25, 
             cpu_only=False, token_spans=None)
 
         # output = model(images=input_images, candidate_labels=inputs["candiates"])
-        print("boxes_filt", boxes_filt)
-        print("pred_phrases", pred_phrases)
+        #print("boxes_filt", boxes_filt)
+        #print("pred_phrases", pred_phrases)
 
-        return boxes_filt, pred_phrases
+        return output
             
             
 # helper functions 
@@ -160,14 +160,42 @@ def get_grounding_output(model, images, caption, box_threshold, text_threshold=N
             else:
                 pred_phrases.append(pred_phrase)
         
-        boxes_filt = list(boxes_filt)
+        boxes_filt = boxes_filt.tolist()
 
         all_boxes_filt.append(boxes_filt)
         all_pred_phrases.append(pred_phrases)
 
-    print("all_boxes_filt", all_boxes_filt)
-    print("all_pred_phrases", all_pred_phrases)
-    return all_boxes_filt, all_pred_phrases
+
+    num_items = len(logits)
+    result_dict = {}
+    boxes_list = all_boxes_filt
+    phrases_list = all_pred_phrases
+
+    # Iterate through items in both lists
+    for i, (boxes, phrases) in enumerate(zip(boxes_list, phrases_list)):
+        item_dict = {}
+    
+        # Process boxes
+        boxes_dict = {}
+        for box_idx, box in enumerate(boxes):
+            box_values = box
+            box_name = f'box_{box_idx}'
+            #box_name = str(box_idx)
+            #boxes_dict[box_name] = {f"box_coord{idx+1}": value for idx, value in enumerate(box_values)}
+            boxes_dict[box_name] = box_values
+    
+        # Process phrases
+        phrases_dict = {f"phrase_{idx}": phrase for idx, phrase in enumerate(phrases)}
+    
+        item_dict['boxes'] = boxes_dict
+        item_dict['phrases'] = phrases_dict
+    
+        result_dict[f"item{i}"] = item_dict
+
+    print(result_dict)
+    
+    return result_dict
+
 
 def load_image(image_path):
     # load image
